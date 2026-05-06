@@ -54,7 +54,7 @@ func (r *Recoverer) recover(ctx context.Context) error {
 		Count:   20,
 	}).Result()
 	if err != nil {
-		return fmt.Errorf("zrangeargs active : %w", err)
+		return fmt.Errorf("zrangeargs active : %v", err)
 	}
 	if len(ids) == 0 {
 		return nil
@@ -64,7 +64,7 @@ func (r *Recoverer) recover(ctx context.Context) error {
 
 	for _, id := range ids {
 		if err := r.recoverOne(ctx, id); err != nil {
-			log.Printf("failed to recover task %s: %w", id, err)
+			log.Printf("failed to recover task %s: %v", id, err)
 		}
 	}
 	return nil
@@ -73,7 +73,7 @@ func (r *Recoverer) recover(ctx context.Context) error {
 func (r *Recoverer) recoverOne(ctx context.Context, id string) error {
 	removed, err := r.rdb.ZRem(ctx, "active", id).Result()
 	if err != nil {
-		return fmt.Errorf("zrem axtive: %w", err)
+		return fmt.Errorf("zrem axtive: %v", err)
 	}
 
 	if removed == 0 {
@@ -87,34 +87,30 @@ func (r *Recoverer) recoverOne(ctx context.Context, id string) error {
 	}
 
 	if err != nil {
-		return fmt.Errorf("hget task payload: %w", err)
+		return fmt.Errorf("hget task payload: %v", err)
 	}
 
 	var t task.Task
 	if err := json.Unmarshal(data, &t); err != nil {
 		// bad payload
 		r.rdb.Del(ctx, fmt.Sprintf("tasks:%s", id))
-		return fmt.Errorf("unmarshal task %s: %w", id, err)
+		return fmt.Errorf("unmarshal task %s: %v", id, err)
 	}
 
 	t.Retries++
 
 	if t.Retries >= t.MaxRetry {
 		log.Printf("recoverer: task %s exhausted retries — discarding", id)
-		pipe := r.rdb.Pipeline()
-		pipe.ZRem(ctx, "active", t.ID)
-		pipe.ZAdd(ctx, "dead", redis.Z{
+		r.rdb.ZAdd(ctx, "dead", redis.Z{
 			Score:  float64(time.Now().Unix()),
 			Member: t.ID,
 		})
-		_, err := pipe.Exec(ctx)
-
-		return err
+		return nil
 	}
 
 	updated, err := json.Marshal(&t)
 	if err != nil {
-		return fmt.Errorf("marshal updated task: %w", err)
+		return fmt.Errorf("marshal updated task: %v", err)
 	}
 
 	pipe := r.rdb.Pipeline()
@@ -122,7 +118,7 @@ func (r *Recoverer) recoverOne(ctx context.Context, id string) error {
 	pipe.LPush(ctx, "pending", id)
 	_, err = pipe.Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("re-queue task %s: %w", id, err)
+		return fmt.Errorf("re-queue task %s: %v", id, err)
 	}
 	log.Printf("recoverer: re-queued task %s (retries=%d)", id, t.Retries)
 	return nil

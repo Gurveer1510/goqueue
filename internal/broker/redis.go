@@ -98,32 +98,32 @@ func (b *RedisBroker) Ack(ctx context.Context, t *task.Task) error {
 
 func (b *RedisBroker) Nack(ctx context.Context, t *task.Task) error {
 	retryAt := time.Now().Add(backoff(t.Retries))
-
+	updated, err := json.Marshal(t)
+	if err != nil {
+		return fmt.Errorf("marshal task: %w", err)
+	}
 	pipe := b.rdb.Pipeline()
+	pipe.HSet(ctx, fmt.Sprintf(keyTaskFmt, t.ID), "data", updated)
 	pipe.ZRem(ctx, keyActive, t.ID)
-	pipe.ZAdd(ctx, keyRetry, redis.Z{
-		Score:  float64(retryAt.Unix()),
-		Member: t.ID,
-	})
-	_, err := pipe.Exec(ctx)
+	pipe.ZAdd(ctx, keyRetry, redis.Z{Score: float64(retryAt.Unix()), Member: t.ID})
+	_, err = pipe.Exec(ctx)
 	return err
 }
 
 func (b *RedisBroker) DeadLetter(ctx context.Context, t *task.Task) error {
+	updated, err := json.Marshal(t)
+	if err != nil {
+		return fmt.Errorf("marshal task: %w", err)
+	}
 	pipe := b.rdb.Pipeline()
+
+	pipe.HSet(ctx, fmt.Sprintf(keyTaskFmt, t.ID), "data", updated)
 	pipe.ZRem(ctx, keyActive, t.ID)
 	pipe.ZAdd(ctx, keyDead, redis.Z{
 		Score:  float64(time.Now().Unix()),
 		Member: t.ID,
 	})
-	_, err := pipe.Exec(ctx)
-	return err
-}
-
-func (b *RedisBroker) UpdateHashSet(ctx context.Context, id string, data []byte) error {
-	pipe := b.rdb.Pipeline()
-	pipe.HSet(ctx, fmt.Sprintf(keyTaskFmt, id), "data", data)
-	_, err := pipe.Exec(ctx)
+	_, err = pipe.Exec(ctx)
 	return err
 }
 
