@@ -16,6 +16,7 @@ const (
 	keyRetry     = "retry"
 	keyActive    = "active"
 	keyTaskFmt   = "tasks:%s"
+	keyDead      = "dead"
 )
 
 type RedisBroker struct {
@@ -71,7 +72,7 @@ func (b *RedisBroker) Dequeue(ctx context.Context, timeout time.Duration) (*task
 	}).Err()
 	if err != nil {
 		b.rdb.LPush(ctx, keyPending, id)
-		return nil, fmt.Errorf("mark active: %w",err)
+		return nil, fmt.Errorf("mark active: %w", err)
 	}
 
 	data, err := b.rdb.HGet(ctx, fmt.Sprintf(keyTaskFmt, id), "data").Bytes()
@@ -98,13 +99,30 @@ func (b *RedisBroker) Ack(ctx context.Context, t *task.Task) error {
 func (b *RedisBroker) Nack(ctx context.Context, t *task.Task) error {
 	retryAt := time.Now().Add(backoff(t.Retries))
 
-
 	pipe := b.rdb.Pipeline()
 	pipe.ZRem(ctx, keyActive, t.ID)
 	pipe.ZAdd(ctx, keyRetry, redis.Z{
-		Score: float64(retryAt.Unix()),
+		Score:  float64(retryAt.Unix()),
 		Member: t.ID,
 	})
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+func (b *RedisBroker) DeadLetter(ctx context.Context, t *task.Task) error {
+	pipe := b.rdb.Pipeline()
+	pipe.ZRem(ctx, keyActive, t.ID)
+	pipe.ZAdd(ctx, keyDead, redis.Z{
+		Score:  float64(time.Now().Unix()),
+		Member: t.ID,
+	})
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+func (b *RedisBroker) UpdateHashSet(ctx context.Context, id string, data []byte) error {
+	pipe := b.rdb.Pipeline()
+	pipe.HSet(ctx, fmt.Sprintf(keyTaskFmt, id), "data", data)
 	_, err := pipe.Exec(ctx)
 	return err
 }

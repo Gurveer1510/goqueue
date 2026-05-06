@@ -13,4 +13,6 @@ type Broker interface {
 	Dequeue(ctx context.Context, timeout time.Duration) (*task.Task, error)
 	Ack(ctx context.Context, t *task.Task) error
 	Nack(ctx context.Context, t *task.Task) error
+	DeadLetter(ctx context.Context, t *task.Task) error
+	UpdateHashSet(ctx context.Context, id string, data []byte) error
 }

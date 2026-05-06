@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -18,10 +19,10 @@ import (
 
 func main() {
 
-	loc, err := time.LoadLocation("Asia/Kolkata")
-	if err != nil {
-		log.Fatalf("unknown timezone: %v", err)
-	}
+	// loc, err := time.LoadLocation("Asia/Kolkata")
+	// if err != nil {
+	// 	log.Fatalf("unknown timezone: %v", err)
+	// }
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr:         "localhost:6379",
@@ -45,7 +46,7 @@ func main() {
 	m.HandleFunc("email:deliver", func(t *task.Task) error {
 		log.Printf("sending email invite....")
 		time.Sleep(2 * time.Second)
-		return nil
+		return fmt.Errorf("TESTING ERROR")
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -62,13 +63,14 @@ func main() {
 		close(procDone)
 	}()
 	// year int, month time.Month, day int, hour int, min int, sec int, nsec int, loc *time.Location
-	t, err := c.EnqueueAt(ctx, time.Date(2026, 5, 6, 15, 11, 0, 0, loc), "email:deliver", map[string]any{"to": "user@abc.xyz"}, client.MaxRetry(3))
-	t2, err := c.EnqueueIn(ctx, 2*time.Minute, "email:deliver", map[string]any{"to": "user@abc.xyz"}, client.MaxRetry(3))
+	// t, err := c.EnqueueAt(ctx, time.Date(2026, 5, 6, 15, 11, 0, 0, loc), "email:deliver", map[string]any{"to": "user@abc.xyz"}, client.MaxRetry(3))
+	t, err := c.EnqueueIn(ctx, 10*time.Second, "email:deliver", map[string]any{"to": "user@abc.xyz"}, client.MaxRetry(3))
+	// t, err := c.Enqueue(ctx, "email:deliver", map[string]any{"to": "user@abc.xyz"}, client.MaxRetry(3))
 	if err != nil {
 		log.Printf("enqueue failed: %v", err)
 	} else {
+		// log.Printf("enqueued task id=%s", t.ID)
 		log.Printf("enqueued task id=%s", t.ID)
-		log.Printf("enqueued task id=%s", t2.ID)
 	}
 
 	quit := make(chan os.Signal, 1)

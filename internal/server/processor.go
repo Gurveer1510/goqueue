@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"time"
@@ -54,7 +55,7 @@ func (p *Processor) Start(ctx context.Context) {
 
 		t, err := p.broker.Dequeue(ctx, 5*time.Second)
 		if err != nil {
-			<-p.semaphore // release the lock 
+			<-p.semaphore // release the lock
 			if errors.Is(err, redis.Nil) {
 				continue
 			}
@@ -99,10 +100,19 @@ func (p *Processor) process(ctx context.Context, t *task.Task) {
 
 		if t.Retries >= t.MaxRetry {
 			log.Printf("task exhasuted retries id=%s type=%s -- discarding", t.ID, t.Type)
-			if err := p.broker.Ack(ctx, t); err != nil {
+			if err := p.broker.DeadLetter(ctx, t); err != nil {
 				log.Printf("ack (exhausted) failed: %v", err)
 			}
 			return
+		}
+		
+		updated, err := json.Marshal(&t)
+		if err != nil {
+			log.Printf("marshal updated task: %v", err)
+		}
+		
+		if err := p.broker.UpdateHashSet(ctx, t.ID, updated); err != nil {
+			log.Printf("updating hash failed id=%s: %v", t.ID, err)
 		}
 
 		if err := p.broker.Nack(ctx, t); err != nil {
