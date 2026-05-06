@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log"
 	"time"
@@ -104,15 +103,6 @@ func (p *Processor) process(ctx context.Context, t *task.Task) {
 				log.Printf("ack (exhausted) failed: %v", err)
 			}
 			return
-		}
-		
-		updated, err := json.Marshal(&t)
-		if err != nil {
-			log.Printf("marshal updated task: %v", err)
-		}
-		
-		if err := p.broker.UpdateHashSet(ctx, t.ID, updated); err != nil {
-			log.Printf("updating hash failed id=%s: %v", t.ID, err)
 		}
 
 		if err := p.broker.Nack(ctx, t); err != nil {

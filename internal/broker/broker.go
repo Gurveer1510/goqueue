@@ -14,5 +14,4 @@ type Broker interface {
 	Ack(ctx context.Context, t *task.Task) error
 	Nack(ctx context.Context, t *task.Task) error
 	DeadLetter(ctx context.Context, t *task.Task) error
-	UpdateHashSet(ctx context.Context, id string, data []byte) error
 }
