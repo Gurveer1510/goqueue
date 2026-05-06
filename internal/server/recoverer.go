@@ -50,8 +50,8 @@ func (r *Recoverer) recover(ctx context.Context) error {
 		ByScore: true,
 		Start:   "-inf",
 		Stop:    fmt.Sprintf("%f", cutoff),
-		Key: "active",
-		Count: 20,
+		Key:     "active",
+		Count:   20,
 	}).Result()
 	if err != nil {
 		return fmt.Errorf("zrangeargs active : %w", err)
@@ -101,8 +101,15 @@ func (r *Recoverer) recoverOne(ctx context.Context, id string) error {
 
 	if t.Retries >= t.MaxRetry {
 		log.Printf("recoverer: task %s exhausted retries — discarding", id)
-		r.rdb.Del(ctx, fmt.Sprintf("tasks:%s", id))
-		return nil
+		pipe := r.rdb.Pipeline()
+		pipe.ZRem(ctx, "active", t.ID)
+		pipe.ZAdd(ctx, "dead", redis.Z{
+			Score:  float64(time.Now().Unix()),
+			Member: t.ID,
+		})
+		_, err := pipe.Exec(ctx)
+
+		return err
 	}
 
 	updated, err := json.Marshal(&t)
@@ -111,7 +118,7 @@ func (r *Recoverer) recoverOne(ctx context.Context, id string) error {
 	}
 
 	pipe := r.rdb.Pipeline()
-	pipe.HSet(ctx, fmt.Sprintf("tasks:%s",id), "data", updated)
+	pipe.HSet(ctx, fmt.Sprintf("tasks:%s", id), "data", updated)
 	pipe.LPush(ctx, "pending", id)
 	_, err = pipe.Exec(ctx)
 	if err != nil {

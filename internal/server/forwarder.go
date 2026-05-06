@@ -57,13 +57,13 @@ func (f *Forwarder) forward(ctx context.Context) error {
 		}
 
 		if len(ids) == 0 {
-			return nil
+			continue
 		}
 
 		log.Printf("forwarder promoting %d due tasks", len(ids))
 
 		for _, id := range ids {
-			removed, err := f.rdb.ZRem(ctx, "scheduled", id).Result()
+			removed, err := f.rdb.ZRem(ctx, src, id).Result()
 			if err != nil {
 				log.Printf("zrem failed for %s: %v", id, err)
 				continue
