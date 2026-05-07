@@ -15,14 +15,36 @@ import (
 
 type Task = task.Task
 
-func NewClient(redisAddr string) (*client.Client, error) {
+type Option = client.Option
+
+func MaxRetry(n int) Option {
+	return client.MaxRetry(n)
+}
+
+type Client struct {
+	c *client.Client
+}
+
+func NewClient(redisAddr string) (*Client, error) {
 	rdb := redis.NewClient(&redis.Options{
 		Addr: redisAddr,
 	})
 	if err := rdb.Ping(context.Background()).Err(); err != nil {
 		return nil, err
 	}
-	return client.NewClient(broker.NewRedisBroker(rdb)), nil
+	return &Client{c: client.NewClient(broker.NewRedisBroker(rdb))}, nil
+}
+
+func (cl *Client) Enqueue(ctx context.Context, taskType string, payload any, opts ...Option) (*Task, error) {
+	return cl.c.Enqueue(ctx, taskType, payload, opts...)
+}
+
+func (cl *Client) EnqueueIn(ctx context.Context, d time.Duration, taskType string, payload any, opts ...Option) (*Task, error) {
+	return cl.c.EnqueueIn(ctx, d, taskType, payload, opts...)
+}
+
+func (cl *Client) EnqueueAt(ctx context.Context, at time.Time, taskType string, payload any, opts ...Option) (*Task, error) {
+	return cl.c.EnqueueAt(ctx, at, taskType, payload, opts...)
 }
 
 type Server struct {
