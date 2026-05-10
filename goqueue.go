@@ -86,9 +86,13 @@ func (s *Server) HandleFunc(taskType string, fn func(*task.Task) error) {
 	s.mux.HandleFunc(taskType, fn)
 }
 
-func (s *Server) Run(ctx context.Context) error {
-	go s.forwarder.Start(ctx)
-	go s.recoverer.Start(ctx)
-	s.processor.Start(ctx)
-	return nil
+func (s *Server) Run(ctx context.Context) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		go s.forwarder.Start(ctx)
+		go s.recoverer.Start(ctx)
+		s.processor.Start(ctx)
+	}()
+	return done
 }
