@@ -15,13 +15,18 @@ type Recoverer struct {
 	rdb      *redis.Client
 	timeout  time.Duration
 	interval time.Duration
+	batch    int
 }
 
-func NewRecoverer(rdb *redis.Client, timeout, interval time.Duration) *Recoverer {
+func NewRecoverer(rdb *redis.Client, timeout, interval time.Duration, batch int) *Recoverer {
+	if batch <= 0 {
+		batch = 20
+	}
 	return &Recoverer{
 		rdb:      rdb,
 		timeout:  timeout,
 		interval: interval,
+		batch:    batch,
 	}
 }
 
@@ -51,7 +56,7 @@ func (r *Recoverer) recover(ctx context.Context) error {
 		Start:   "-inf",
 		Stop:    fmt.Sprintf("%f", cutoff),
 		Key:     "active",
-		Count:   20,
+		Count:   int64(r.batch),
 	}).Result()
 	if err != nil {
 		return fmt.Errorf("zrangeargs active : %v", err)
@@ -101,10 +106,16 @@ func (r *Recoverer) recoverOne(ctx context.Context, id string) error {
 
 	if t.Retries >= t.MaxRetry {
 		log.Printf("recoverer: task %s exhausted retries — discarding", id)
-		r.rdb.ZAdd(ctx, "dead", redis.Z{
+		pipe := r.rdb.Pipeline()
+		pipe.HSet(ctx, fmt.Sprintf("tasks:%s", id), "data", data)
+		pipe.ZRem(ctx, "active", id)
+		pipe.ZAdd(ctx, "dead", redis.Z{
 			Score:  float64(time.Now().Unix()),
 			Member: t.ID,
 		})
+		if _, err := pipe.Exec(ctx); err != nil {
+			log.Printf("recoverer: failed to dead-letter task %s: %v", id, err)
+		}
 		return nil
 	}
 

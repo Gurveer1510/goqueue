@@ -9,3 +9,11 @@ func MaxRetry(n int) Option {
 		t.MaxRetry = n
 	}
 }
+
+// IdempotencyKey sets a unique key to prevent duplicate task creation.
+// If a task with the same key was already enqueued, it returns the existing task.
+func IdempotencyKey(key string) Option {
+	return func(t *task.Task) {
+		t.IdempotencyKey = key
+	}
+}

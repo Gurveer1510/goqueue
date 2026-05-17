@@ -14,4 +14,13 @@ type Broker interface {
 	Ack(ctx context.Context, t *task.Task) error
 	Nack(ctx context.Context, t *task.Task) error
 	DeadLetter(ctx context.Context, t *task.Task) error
+	Stats(ctx context.Context) (Stats, error)
+}
+
+type Stats struct {
+	Pending   int64
+	Scheduled int64
+	Active    int64
+	Retry     int64
+	Dead      int64
 }

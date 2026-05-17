@@ -21,6 +21,10 @@ func MaxRetry(n int) Option {
 	return client.MaxRetry(n)
 }
 
+func IdempotencyKey(key string) Option {
+	return client.IdempotencyKey(key)
+}
+
 type Client struct {
 	c *client.Client
 }
@@ -58,6 +62,22 @@ type Server struct {
 type Config struct {
 	RedisAddr   string
 	Concurrency int
+
+	// ForwarderInterval controls how often scheduled/retry tasks are promoted
+	// to the pending queue. Default: 5 seconds
+	ForwarderInterval time.Duration
+
+	// RecovererInterval controls how often stale active tasks are checked
+	// Default: 1 minute
+	RecovererInterval time.Duration
+
+	// RecovererTimeout marks tasks as stale after this duration
+	// Default: 5 minutes
+	RecovererTimeout time.Duration
+
+	// BatchSize controls how many tasks are processed per forwarder/recoverer cycle
+	// Default: 20
+	BatchSize int
 }
 
 func NewServer(cfg Config) (*Server, error) {
@@ -73,19 +93,43 @@ func NewServer(cfg Config) (*Server, error) {
 	if concurrency == 0 {
 		concurrency = 10
 	}
+
+	forwarderInterval := cfg.ForwarderInterval
+	if forwarderInterval == 0 {
+		forwarderInterval = 5 * time.Second
+	}
+
+	recovererInterval := cfg.RecovererInterval
+	if recovererInterval == 0 {
+		recovererInterval = time.Minute
+	}
+
+	recovererTimeout := cfg.RecovererTimeout
+	if recovererTimeout == 0 {
+		recovererTimeout = 5 * time.Minute
+	}
+
+	batchSize := cfg.BatchSize
+	if batchSize == 0 {
+		batchSize = 20
+	}
+
 	return &Server{
 		mux:       m,
 		broker:    b,
 		processor: server.NewProcessor(b, m, concurrency),
-		forwarder: server.NewForwarder(rdb, 5*time.Second),
-		recoverer: server.NewRecoverer(rdb, 5*time.Minute, time.Minute),
+		forwarder: server.NewForwarder(rdb, forwarderInterval, batchSize),
+		recoverer: server.NewRecoverer(rdb, recovererTimeout, recovererInterval, batchSize),
 	}, nil
 }
 
-func (s *Server) HandleFunc(taskType string, fn func(*task.Task) error) {
+func (s *Server) HandleFunc(taskType string, fn func(context.Context, *task.Task) error) {
 	s.mux.HandleFunc(taskType, fn)
 }
 
+// Run starts the server's background workers and blocks until the context is cancelled.
+// When cancelled, it gracefully drains in-flight tasks (up to 30 seconds).
+// The returned done channel closes when shutdown is complete.
 func (s *Server) Run(ctx context.Context) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
@@ -95,4 +139,21 @@ func (s *Server) Run(ctx context.Context) <-chan struct{} {
 		s.processor.Start(ctx)
 	}()
 	return done
+}
+
+// Stats returns current queue statistics.
+func (s *Server) Stats(ctx context.Context) (broker.Stats, error) {
+	return s.broker.Stats(ctx)
+}
+
+// Health returns an error if Redis is unreachable.
+func (s *Server) Health(ctx context.Context) error {
+	stats, err := s.broker.Stats(ctx)
+	if err != nil {
+		return fmt.Errorf("health check failed: %w", err)
+	}
+	if stats.Pending < 0 || stats.Active < 0 {
+		return fmt.Errorf("invalid queue stats")
+	}
+	return nil
 }

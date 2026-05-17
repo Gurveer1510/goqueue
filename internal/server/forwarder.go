@@ -9,20 +9,40 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+var (
+	forwardScript = redis.NewScript(`
+		local id = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1], 'LIMIT', 0, ARGV[2])
+		if #id == 0 then
+			return 0
+		end
+		local removed = redis.call('ZREM', KEYS[1], id[1])
+		if removed == 0 then
+			return 0
+		end
+		redis.call('LPUSH', KEYS[2], id[1])
+		return 1
+	`)
+)
+
 type Forwarder struct {
 	rdb      *redis.Client
 	interval time.Duration
+	batch    int
 }
 
-func NewForwarder(rdb *redis.Client, interval time.Duration) *Forwarder {
+func NewForwarder(rdb *redis.Client, interval time.Duration, batch int) *Forwarder {
+	if batch <= 0 {
+		batch = 20
+	}
 	return &Forwarder{
 		rdb:      rdb,
 		interval: interval,
+		batch:    batch,
 	}
 }
 
 func (f *Forwarder) Start(ctx context.Context) {
-	log.Printf("Forwarder starting, interval=%s", f.interval)
+	log.Printf("Forwarder starting, interval=%s batch=%d", f.interval, f.batch)
 	ticker := time.NewTicker(f.interval)
 	defer ticker.Stop()
 
@@ -40,45 +60,26 @@ func (f *Forwarder) Start(ctx context.Context) {
 }
 
 func (f *Forwarder) forward(ctx context.Context) error {
-	now := float64(time.Now().Unix())
+	now := time.Now().Unix()
+	nowFloat := fmt.Sprintf("%d", now)
 
-	// ids, err := f.rdb.ZRangeArgs(ctx, ).Result()
+	totalForwarded := 0
 	for _, src := range []string{"scheduled", "retry"} {
-		ids, err := f.rdb.ZRangeArgs(ctx, redis.ZRangeArgs{
-			ByScore: true,
-			Start:   "-inf",
-			Stop:    fmt.Sprintf("%f", now),
-			Key:     src,
-			Count:   20,
-		}).Result()
-
-		if err != nil {
-			return fmt.Errorf("zrangebyscore: %w", err)
-		}
-
-		if len(ids) == 0 {
-			continue
-		}
-
-		log.Printf("forwarder promoting %d due tasks", len(ids))
-
-		for _, id := range ids {
-			removed, err := f.rdb.ZRem(ctx, src, id).Result()
+		for {
+			result, err := forwardScript.Run(ctx, f.rdb, []string{src, "pending"}, nowFloat, f.batch).Int()
 			if err != nil {
-				log.Printf("zrem failed for %s: %v", id, err)
-				continue
+				log.Printf("forward script error for %s: %v", src, err)
+				break
 			}
-			if removed == 0 {
-				continue
+			if result == 0 {
+				break
 			}
-
-			if err := f.rdb.LPush(ctx, "pending", id).Err(); err != nil {
-				log.Printf("lpush failed for %s: %v", id, err)
-				// if this push fails then the task is lost forever, need to fix this. right now don't know how to do it. too lazy to search
-				continue
-			}
+			totalForwarded += result
 		}
 	}
 
+	if totalForwarded > 0 {
+		log.Printf("forwarder promoted %d tasks", totalForwarded)
+	}
 	return nil
 }

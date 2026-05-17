@@ -11,12 +11,13 @@ import (
 )
 
 const (
-	keyPending   = "pending"
-	keyScheduled = "scheduled"
-	keyRetry     = "retry"
-	keyActive    = "active"
-	keyTaskFmt   = "tasks:%s"
-	keyDead      = "dead"
+	keyPending      = "pending"
+	keyScheduled    = "scheduled"
+	keyRetry        = "retry"
+	keyActive       = "active"
+	keyTaskFmt      = "tasks:%s"
+	keyDead         = "dead"
+	keyIdempotency  = "idempotency:%s"
 )
 
 type RedisBroker struct {
@@ -30,6 +31,16 @@ func NewRedisBroker(rdb *redis.Client) *RedisBroker {
 }
 
 func (b *RedisBroker) Enqueue(ctx context.Context, t *task.Task) error {
+	if t.IdempotencyKey != "" {
+		exists, err := b.rdb.Exists(ctx, fmt.Sprintf(keyIdempotency, t.IdempotencyKey)).Result()
+		if err != nil {
+			return fmt.Errorf("check idempotency: %w", err)
+		}
+		if exists == 1 {
+			return fmt.Errorf("task with idempotency key %q already exists", t.IdempotencyKey)
+		}
+	}
+
 	data, err := json.Marshal(t)
 	if err != nil {
 		return fmt.Errorf("marshal task: %w", err)
@@ -38,6 +49,9 @@ func (b *RedisBroker) Enqueue(ctx context.Context, t *task.Task) error {
 	pipe := b.rdb.Pipeline()
 	pipe.HSet(ctx, fmt.Sprintf(keyTaskFmt, t.ID), "data", data)
 	pipe.LPush(ctx, keyPending, t.ID)
+	if t.IdempotencyKey != "" {
+		pipe.Set(ctx, fmt.Sprintf(keyIdempotency, t.IdempotencyKey), t.ID, 0)
+	}
 	_, err = pipe.Exec(ctx)
 	return err
 }
@@ -129,4 +143,26 @@ func (b *RedisBroker) DeadLetter(ctx context.Context, t *task.Task) error {
 
 func backoff(retries int) time.Duration {
 	return time.Duration(retries*retries) * 10 * time.Second
+}
+
+func (b *RedisBroker) Stats(ctx context.Context) (Stats, error) {
+	pipe := b.rdb.Pipeline()
+	llenPending := pipe.LLen(ctx, keyPending)
+	zcardScheduled := pipe.ZCard(ctx, keyScheduled)
+	zcardActive := pipe.ZCard(ctx, keyActive)
+	zcardRetry := pipe.ZCard(ctx, keyRetry)
+	zcardDead := pipe.ZCard(ctx, keyDead)
+
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		return Stats{}, fmt.Errorf("stats pipeline: %w", err)
+	}
+
+	return Stats{
+		Pending:   llenPending.Val(),
+		Scheduled: zcardScheduled.Val(),
+		Active:    zcardActive.Val(),
+		Retry:     zcardRetry.Val(),
+		Dead:      zcardDead.Val(),
+	}, nil
 }

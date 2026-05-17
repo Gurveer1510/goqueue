@@ -1,6 +1,7 @@
 package mux
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -37,7 +38,7 @@ func (m *ServeMux) Handle(taskType string, h task.Handler) {
 	m.handlers[taskType] = h
 }
 
-func (m *ServeMux) HandleFunc(taskType string, fn func(*task.Task) error) {
+func (m *ServeMux) HandleFunc(taskType string, fn func(context.Context, *task.Task) error) {
 	m.Handle(taskType, task.HandlerFunc(fn))
 }
 

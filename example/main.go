@@ -24,7 +24,7 @@ func main() {
         log.Fatalf("server init failed: %v", err)
     }
 
-    srv.HandleFunc("email:deliver", func(t *goqueue.Task) error {
+    srv.HandleFunc("email:deliver", func(ctx context.Context, t *goqueue.Task) error {
         log.Printf("sending email to %s", t.Payload)
         return nil
     })

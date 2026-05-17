@@ -20,6 +20,10 @@ func NewClient(b broker.Broker) *Client {
 }
 
 func (c *Client) Enqueue(ctx context.Context, taskType string, payload any, opts ...Option) (*task.Task, error) {
+	if taskType == "" {
+		return nil, fmt.Errorf("task type cannot be empty")
+	}
+
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal payload: %w", err)
@@ -50,6 +54,10 @@ func (c *Client) EnqueueIn(ctx context.Context, d time.Duration, taskType string
 
 // EneueueAt schedules a task to run at a specific time
 func (c *Client) EnqueueAt(ctx context.Context, at time.Time, taskType string, payload any, opts ...Option) (*task.Task, error) {
+	if taskType == "" {
+		return nil, fmt.Errorf("task type cannot be empty")
+	}
+
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal payload: %w", err)
